@@ -11,10 +11,9 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Enable CORS so registries can connect
 app.use(cors());
 
-// Map to hold individual scanner sessions (Prevents Glama and Smithery from crashing into each other)
+// Map to hold individual scanner sessions
 const transports = new Map<string, SSEServerTransport>();
 
 /**
@@ -87,13 +86,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
 /**
  * ------------------------------------------------------------------
- * 2. DISCOVERY (The ID Card for Smithery)
+ * 2. DISCOVERY
  * ------------------------------------------------------------------
  */
 app.get('/.well-known/mcp/server-card.json', (req: Request, res: Response) => {
-    // Fixed Type mismatch: Force headers to string and take first element if array exists
-    const protocol = String(req.headers['x-forwarded-proto'] || req.protocol).split(',')[0].trim();
-    const host = String(req.headers.host);
+    // Force casting to any to bypass TS header array checks
+    const xfp = req.headers['x-forwarded-proto'] as any;
+    const protocol = (Array.isArray(xfp) ? xfp[0] : xfp) || req.protocol;
+    
+    const hostHeader = req.headers.host as any;
+    const host = (Array.isArray(hostHeader) ? hostHeader[0] : hostHeader) || 'localhost:3000';
     
     res.json({
         "$schema": "https://modelcontextprotocol.io/schemas/server-card/v1.0",
@@ -113,18 +115,15 @@ app.get('/.well-known/mcp/server-card.json', (req: Request, res: Response) => {
 
 /**
  * ------------------------------------------------------------------
- * 3. SSE TRANSPORT (Session-Isolated)
+ * 3. SSE TRANSPORT
  * ------------------------------------------------------------------
  */
 app.get("/sse", async (req: Request, res: Response) => {
     const sessionId = uuidv4();
-    console.log(`[MCP] Connection opened: ${sessionId}`);
-
     const transport = new SSEServerTransport(`/messages/${sessionId}`, res);
     transports.set(sessionId, transport);
 
     res.on('close', () => {
-        console.log(`[MCP] Connection closed: ${sessionId}`);
         transports.delete(sessionId);
     });
 
@@ -133,11 +132,12 @@ app.get("/sse", async (req: Request, res: Response) => {
 
 /**
  * ------------------------------------------------------------------
- * 4. MESSAGE ROUTER (Raw Text Parsing to Protect the Stream)
+ * 4. MESSAGE ROUTER (Fixed SessionID Error)
  * ------------------------------------------------------------------
  */
 app.post("/messages/:sessionId", express.text({ type: '*/*' }), async (req: Request, res: Response) => {
-    const { sessionId } = req.params;
+    // Explicitly cast params to any to allow sessionId access
+    const { sessionId } = req.params as any;
     const transport = transports.get(sessionId);
 
     if (!transport) {
@@ -145,9 +145,14 @@ app.post("/messages/:sessionId", express.text({ type: '*/*' }), async (req: Requ
     }
 
     try {
-        if (typeof req.body === 'string') {
-            req.body = JSON.parse(req.body);
+        let body = req.body;
+        if (typeof body === 'string') {
+            body = JSON.parse(body);
         }
+        
+        // Re-assign the parsed body to req.body so the SDK can find it
+        (req as any).body = body;
+        
         await transport.handlePostMessage(req, res);
     } catch (error) {
         console.error("Message Error:", error);
@@ -155,7 +160,6 @@ app.post("/messages/:sessionId", express.text({ type: '*/*' }), async (req: Requ
     }
 });
 
-// Health Check
-app.get('/health', (req, res) => res.json({ status: "ok" }));
+app.get('/health', (req: Request, res: Response) => res.json({ status: "ok" }));
 
-app.listen(PORT, () => console.log(`[🚀] Novoriq MCP Intelligence Gateway Live on Port ${PORT}`));
+app.listen(PORT, () => console.log(`[🚀] Novoriq MCP Gateway Live`));
