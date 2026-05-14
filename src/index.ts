@@ -91,8 +91,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
  * ------------------------------------------------------------------
  */
 app.get('/.well-known/mcp/server-card.json', (req: Request, res: Response) => {
-    const protocol = req.headers['x-forwarded-proto'] || req.protocol;
-    const host = req.headers.host;
+    // Fixed Type mismatch: Force headers to string and take first element if array exists
+    const protocol = String(req.headers['x-forwarded-proto'] || req.protocol).split(',')[0].trim();
+    const host = String(req.headers.host);
     
     res.json({
         "$schema": "https://modelcontextprotocol.io/schemas/server-card/v1.0",
